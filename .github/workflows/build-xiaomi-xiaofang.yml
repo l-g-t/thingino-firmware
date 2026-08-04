@@ -1,0 +1,227 @@
+# ==============================================================================
+# Thingino Firmware — 自定义构建 (小米小方 T20L)
+# 参考: https://github.com/themactep/thingino-firmware 的 firmware-master.yaml
+# 精简版: 只编译 xiaomi_xiaofang_t20l_jxf23_rtl8189ftv 一个型号
+# ==============================================================================
+
+name: build-xiaomi-xiaofang
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        type: choice
+        description: '从哪个分支构建'
+        required: false
+        default: 'master'
+        options:
+          - master
+          - ciao
+          - figata
+          - stable
+      debug_enabled:
+        type: boolean
+        description: 'Debug 模式 (生成假固件，测试 workflow 流程)'
+        required: false
+        default: false
+
+env:
+  BR2_DL_DIR: ~/dl
+  FORCE_UNSAFE_CONFIGURE: 1
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  TERM: linux
+  TZ: UTC
+
+# ── 硬编码要编译的型号 ──────────────────────────────────────────────────────
+# 如需更改型号，只改这一行即可
+# 可用型号列表: gh api "repos/themactep/thingino-firmware/git/trees/master?recursive=1" \
+#   --jq '.tree[].path | select(test("^configs/cameras/.*_defconfig$")) | sub(".*/";"") | sub("_defconfig$";"")' | sort
+
+jobs:
+  build:
+    name: xiaomi_xiaofang_t20l
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 30
+    container:
+      image: debian:forky
+
+    steps:
+      # ── 1. 安装构建依赖 ──────────────────────────────────────────────────
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends --no-install-suggests \
+            autoconf build-essential bc ca-certificates cmake cpio curl file \
+            gawk gh git jq lzop m4 make p7zip-full perl python3 python3-setuptools \
+            procps rsync tzdata u-boot-tools unzip wget \
+            libncurses-dev swig python3-dev libssl-dev
+
+      - name: Set timezone
+        run: |
+          ln -sf /usr/share/zoneinfo/${{ env.TZ }} /etc/localtime
+          echo ${{ env.TZ }} > /etc/timezone
+          DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive tzdata
+
+      # ── 2. 检出代码 ──────────────────────────────────────────────────────
+      - name: Setup git workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          submodules: 'true'
+          ref: ${{ github.event.inputs.branch }}
+          fetch-depth: '1'
+
+      # ── 3. 准备缓存目录 ──────────────────────────────────────────────────
+      - name: Setup cache directories
+        run: |
+          mkdir -p ~/.buildroot-ccache
+          mkdir -p ~/dl
+
+      # ── 4. 恢复 ccache (从上游 rolling release 加速编译) ──────────────────
+      - name: Restore ccache
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="themactep/thingino-firmware"
+          CAM="xiaomi_xiaofang_t20l_jxf23_rtl8189ftv"
+          CAM_SAFE=$(printf '%s' "$CAM" | tr -c 'A-Za-z0-9._-' '-')
+          ARCH_TAG=$(uname -m | sed 's/x86_64/x86_64/; s/aarch64/ARM64/')
+          mkdir -p /tmp/cc
+          # 尝试从上游的 ccache release 恢复编译缓存
+          ASSET="ccache-master-${{ runner.arch }}-${CAM_SAFE}.zip"
+          if gh release download ccache --repo "$REPO" --pattern "$ASSET" --dir /tmp/cc 2>/dev/null; then
+            echo "Restoring $ASSET"
+            ( cd ~ && 7z x -y "/tmp/cc/$ASSET" >/dev/null ) || true
+            echo "ccache restored: $(du -sh ~/.buildroot-ccache 2>/dev/null | cut -f1)"
+          else
+            echo "No ccache found — cold build (首次编译会慢一些)"
+          fi
+
+      # ── 5. 获取 buildroot 下载缓存 (大幅加速源码下载) ─────────────────────
+      - name: Fetch buildroot-dl-cache
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="themactep/thingino-firmware"
+          # 查找上游的 buildroot-dl-cache release
+          RELEASE_TAG=$(gh release list --repo "$REPO" --json name,tagName 2>/dev/null | \
+            jq -r '.[] | select(.name=="buildroot-dl-cache") | .tagName' | sort -r | head -1 || echo "")
+          if [ -z "$RELEASE_TAG" ]; then
+            RELEASE_TAG=$(gh release list --repo "$REPO" --json tagName 2>/dev/null | \
+              jq -r '.[] | select(.tagName | startswith("update_cache")) | .tagName' | head -1 || echo "")
+          fi
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "No buildroot-dl-cache release found — will download sources directly"
+            exit 0
+          fi
+          echo "Found dl-cache release: $RELEASE_TAG"
+          mkdir -p /tmp/dl-cache
+          set +e
+          gh release download "$RELEASE_TAG" --repo "$REPO" --pattern "buildroot-dl-cache*" --dir "/tmp/dl-cache"
+          DOWNLOAD_RC=$?
+          set -e
+          if [ $DOWNLOAD_RC -ne 0 ] || [ -z "$(ls -A /tmp/dl-cache/ 2>/dev/null)" ]; then
+            echo "dl-cache download failed or empty — will download sources directly"
+            exit 0
+          fi
+          echo "Extracting dl-cache..."
+          cd ~
+          if ls /tmp/dl-cache/buildroot-dl-cache.zip.* &>/dev/null; then
+            7z x /tmp/dl-cache/buildroot-dl-cache.zip.001 -y
+          else
+            7z x /tmp/dl-cache/buildroot-dl-cache.zip -y
+          fi
+          # 处理嵌套 dl/ 目录
+          if [ -d ~/dl/dl ]; then
+            mv ~/dl/dl/* ~/dl/ 2>/dev/null || true
+            rm -rf ~/dl/dl
+          fi
+          echo "dl-cache restored: $(find ~/dl -type f 2>/dev/null | wc -l) files"
+
+      # ── 6. 编译固件 ─────────────────────────────────────────────────────
+      - name: Build firmware
+        if: ${{ github.event.inputs.debug_enabled != 'true' }}
+        env:
+          CCACHE_MAXSIZE: "1G"
+        run: |
+          BOARD=xiaomi_xiaofang_t20l_jxf23_rtl8189ftv make fast WORKFLOW=1
+
+      - name: Generate debug dummy firmware (test mode)
+        if: ${{ github.event.inputs.debug_enabled == 'true' }}
+        run: |
+          BOARD="xiaomi_xiaofang_t20l_jxf23_rtl8189ftv"
+          BRANCH="${{ github.event.inputs.branch }}"
+          mkdir -p ${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/
+          echo "debug" > ${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/thingino-${BOARD}.bin
+          echo "debug uboot" > ${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/u-boot-lzo-with-spl.bin
+          echo "debug kernel" > ${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/uImage
+          echo "debug rootfs" > ${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/rootfs.squashfs
+          echo "debug sha" > ${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/thingino-${BOARD}.bin.sha256sum
+
+      # ── 7. 验证并收集固件产物 ────────────────────────────────────────────
+      - name: Validate and collect firmware artifacts
+        run: |
+          BOARD="xiaomi_xiaofang_t20l_jxf23_rtl8189ftv"
+          BRANCH="${{ github.event.inputs.branch }}"
+          OUT_BASE="${GITHUB_WORKSPACE}/output/${BRANCH}"
+          # output 目录可能带有内核/ libc 后缀，用通配符匹配
+          FULL_FW=$(find ${OUT_BASE}/${BOARD}*/images/ -name "thingino-${BOARD}.bin" ! -name "*update.bin" | head -n 1)
+          echo "FULL_FW: $FULL_FW"
+          if [[ -z "$FULL_FW" ]]; then
+            echo "ERROR: 固件产物未找到!"
+            echo "搜索路径: ${OUT_BASE}/${BOARD}*/images/"
+            ls -la "${OUT_BASE}" || true
+            find "${OUT_BASE}" -name "*.bin" 2>/dev/null || true
+            exit 1
+          fi
+          FULL_FW_UBOOT=$(find ${OUT_BASE}/${BOARD}*/images/ -name "u-boot-*spl*.bin" | head -n 1)
+          FULL_FW_KERNEL=$(find ${OUT_BASE}/${BOARD}*/images/ -name "uImage" | head -n 1)
+          FULL_FW_ROOTFS=$(find ${OUT_BASE}/${BOARD}*/images/ -name "rootfs.squashfs" | head -n 1)
+          FULL_FW_SHA="${FULL_FW}.sha256sum"
+          echo "FULL_FW=${FULL_FW}" >> $GITHUB_ENV
+          echo "FULL_FW_UBOOT=${FULL_FW_UBOOT}" >> $GITHUB_ENV
+          echo "FULL_FW_KERNEL=${FULL_FW_KERNEL}" >> $GITHUB_ENV
+          echo "FULL_FW_ROOTFS=${FULL_FW_ROOTFS}" >> $GITHUB_ENV
+          echo "FULL_FW_SHA=${FULL_FW_SHA}" >> $GITHUB_ENV
+          # 打印固件大小
+          echo "=== 固件产物 ==="
+          ls -lh "$FULL_FW" 2>/dev/null
+          ls -lh "$FULL_FW_UBOOT" 2>/dev/null
+          ls -lh "$FULL_FW_KERNEL" 2>/dev/null
+          ls -lh "$FULL_FW_ROOTFS" 2>/dev/null
+
+      # ── 8. 上传固件到 GitHub Artifact (完成后可直接下载) ──────────────────
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: thingino-xiaomi-xiaofang-t20l
+          path: |
+            ${{ env.FULL_FW }}
+            ${{ env.FULL_FW_UBOOT }}
+            ${{ env.FULL_FW_KERNEL }}
+            ${{ env.FULL_FW_ROOTFS }}
+            ${{ env.FULL_FW_SHA }}
+          retention-days: 30
+
+      # ── 9. 打包为 7z 便于下载 ────────────────────────────────────────────
+      - name: Package firmware as 7z
+        run: |
+          mkdir -p /tmp/output
+          7z a -t7z -mx=9 -mmt=on \
+            /tmp/output/thingino-xiaomi-xiaofang-t20l.7z \
+            ${{ env.FULL_FW }} \
+            ${{ env.FULL_FW_SHA }} \
+            ${{ env.FULL_FW_UBOOT }} \
+            ${{ env.FULL_FW_KERNEL }} \
+            ${{ env.FULL_FW_ROOTFS }} \
+            || true
+          ls -lh /tmp/output/
+
+      - name: Upload 7z package
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: thingino-xiaomi-xiaofang-t20l-7z
+          path: /tmp/output/thingino-xiaomi-xiaofang-t20l.7z
+          retention-days: 30
