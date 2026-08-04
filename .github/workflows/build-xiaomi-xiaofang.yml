@@ -45,6 +45,10 @@ jobs:
     container:
       image: debian:forky
 
+    defaults:
+      run:
+        shell: bash
+
     steps:
       # ── 1. 安装 GitHub CLI (debian:forky 官方源没有 gh) ──────────────────
       - name: Install GitHub CLI
@@ -198,7 +202,7 @@ jobs:
           # output 目录可能带有内核/ libc 后缀，用通配符匹配
           FULL_FW=$(find ${OUT_BASE}/${BOARD}*/images/ -name "thingino-${BOARD}.bin" ! -name "*update.bin" | head -n 1)
           echo "FULL_FW: $FULL_FW"
-          if [[ -z "$FULL_FW" ]]; then
+          if [ -z "$FULL_FW" ]; then
             echo "ERROR: 固件产物未找到!"
             echo "搜索路径: ${OUT_BASE}/${BOARD}*/images/"
             ls -la "${OUT_BASE}" || true
