@@ -181,6 +181,30 @@ jobs:
 
           echo "=== 固件编译完成 ==="
 
+      # ── 7b. 构建失败时抓取错误日志 ──────────────────────────────────────
+      - name: Capture build log on failure
+        if: ${{ failure() && github.event.inputs.debug_enabled != 'true' }}
+        run: |
+          echo "=== 构建失败，抓取日志 ==="
+          OUTDIR=$(find output/ -maxdepth 1 -type d -name "xiaomi*" | head -1)
+          if [ -n "$OUTDIR" ]; then
+            echo "=== 输出目录: $OUTDIR ==="
+            # 找最新的构建日志
+            LOG=$(find "$OUTDIR/logs/" -name "*.log" -type f 2>/dev/null | sort | tail -1)
+            if [ -n "$LOG" ]; then
+              echo "=== 日志文件: $LOG ==="
+              echo "=== 最后 200 行 ==="
+              tail -200 "$LOG"
+            else
+              echo "=== 未找到 .log 文件，列出 logs 目录 ==="
+              ls -la "$OUTDIR/logs/" 2>/dev/null || true
+            fi
+          else
+            echo "=== 未找到输出目录 ==="
+            find output/ -maxdepth 2 -type d 2>/dev/null | head -10
+          fi
+          echo "=== 日志抓取结束 ==="
+
       - name: Generate debug dummy firmware (test mode)
         if: ${{ github.event.inputs.debug_enabled == 'true' }}
         run: |
