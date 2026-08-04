@@ -199,31 +199,40 @@ jobs:
           BOARD="xiaomi_xiaofang_t20l_jxf23_rtl8189ftv"
           BRANCH="${{ github.event.inputs.branch }}"
           OUT_BASE="${GITHUB_WORKSPACE}/output/${BRANCH}"
-          # output 目录可能带有内核/ libc 后缀，用通配符匹配
-          FULL_FW=$(find ${OUT_BASE}/${BOARD}*/images/ -name "thingino-${BOARD}.bin" ! -name "*update.bin" | head -n 1)
+          IMG_DIR=$(find ${OUT_BASE} -maxdepth 2 -type d -name "images" -path "*${BOARD}*" | head -1)
+          echo "=== images 目录: $IMG_DIR ==="
+
+          # 列出所有生成的产物
+          echo "=== 目录内容 ==="
+          ls -lh "$IMG_DIR/" || true
+
+          # 找到主固件 .bin 文件
+          FULL_FW=$(find "$IMG_DIR" -name "thingino-${BOARD}.bin" ! -name "*update.bin" 2>/dev/null | head -n 1 || true)
           echo "FULL_FW: $FULL_FW"
           if [ -z "$FULL_FW" ]; then
-            echo "ERROR: 固件产物未找到!"
-            echo "搜索路径: ${OUT_BASE}/${BOARD}*/images/"
-            ls -la "${OUT_BASE}" || true
-            find "${OUT_BASE}" -name "*.bin" 2>/dev/null || true
+            echo "ERROR: 主固件 .bin 未找到!"
             exit 1
           fi
-          FULL_FW_UBOOT=$(find ${OUT_BASE}/${BOARD}*/images/ -name "u-boot-*spl*.bin" | head -n 1)
-          FULL_FW_KERNEL=$(find ${OUT_BASE}/${BOARD}*/images/ -name "uImage" | head -n 1)
-          FULL_FW_ROOTFS=$(find ${OUT_BASE}/${BOARD}*/images/ -name "rootfs.squashfs" | head -n 1)
+
+          # 查找其他产物 (用 || true 防止 find 无匹配时 set -e 报错)
+          FULL_FW_UBOOT=$(find "$IMG_DIR" -name "u-boot-*spl*.bin" 2>/dev/null | head -n 1 || true)
+          FULL_FW_KERNEL=$(find "$IMG_DIR" -name "uImage" 2>/dev/null | head -n 1 || true)
+          FULL_FW_ROOTFS=$(find "$IMG_DIR" -name "rootfs.squashfs" 2>/dev/null | head -n 1 || true)
           FULL_FW_SHA="${FULL_FW}.sha256sum"
+
+          # 设置环境变量供后续步骤使用
           echo "FULL_FW=${FULL_FW}" >> $GITHUB_ENV
           echo "FULL_FW_UBOOT=${FULL_FW_UBOOT}" >> $GITHUB_ENV
           echo "FULL_FW_KERNEL=${FULL_FW_KERNEL}" >> $GITHUB_ENV
           echo "FULL_FW_ROOTFS=${FULL_FW_ROOTFS}" >> $GITHUB_ENV
           echo "FULL_FW_SHA=${FULL_FW_SHA}" >> $GITHUB_ENV
-          # 打印固件大小
+
           echo "=== 固件产物 ==="
-          ls -lh "$FULL_FW" 2>/dev/null
-          ls -lh "$FULL_FW_UBOOT" 2>/dev/null
-          ls -lh "$FULL_FW_KERNEL" 2>/dev/null
-          ls -lh "$FULL_FW_ROOTFS" 2>/dev/null
+          echo "  主固件:    $(ls -lh "$FULL_FW" 2>/dev/null | awk '{print $5, $9}')"
+          echo "  U-Boot:    $(ls -lh "$FULL_FW_UBOOT" 2>/dev/null | awk '{print $5, $9}' || echo '未找到')"
+          echo "  Kernel:    $(ls -lh "$FULL_FW_KERNEL" 2>/dev/null | awk '{print $5, $9}' || echo '未找到')"
+          echo "  RootFS:    $(ls -lh "$FULL_FW_ROOTFS" 2>/dev/null | awk '{print $5, $9}' || echo '未找到')"
+          echo "  SHA256:    $(ls -lh "$FULL_FW_SHA" 2>/dev/null | awk '{print $5, $9}' || echo '未找到')"
 
       # ── 9. 上传固件到 GitHub Artifact (完成后可直接下载) ──────────────────
       - name: Upload firmware artifacts
@@ -232,29 +241,31 @@ jobs:
           name: thingino-xiaomi-xiaofang-t20l
           path: |
             ${{ env.FULL_FW }}
-            ${{ env.FULL_FW_UBOOT }}
-            ${{ env.FULL_FW_KERNEL }}
-            ${{ env.FULL_FW_ROOTFS }}
             ${{ env.FULL_FW_SHA }}
           retention-days: 30
+          if-no-files-found: error
 
-      # ── 10. 打包为 7z 便于下载 ───────────────────────────────────────────
+      # ── 10. 打包整个 images 目录为 7z (含 uboot/kernel/rootfs 等全部产物) ─
       - name: Package firmware as 7z
         run: |
           mkdir -p /tmp/output
+          # 打包整个 images 目录，包含所有编译产物
+          IMG_DIR=$(dirname "${{ env.FULL_FW }}")
+          echo "=== 打包 images 目录: $IMG_DIR ==="
+          ls -lh "$IMG_DIR/"
+          cd "$IMG_DIR"
           7z a -t7z -mx=9 -mmt=on \
             /tmp/output/thingino-xiaomi-xiaofang-t20l.7z \
-            ${{ env.FULL_FW }} \
-            ${{ env.FULL_FW_SHA }} \
-            ${{ env.FULL_FW_UBOOT }} \
-            ${{ env.FULL_FW_KERNEL }} \
-            ${{ env.FULL_FW_ROOTFS }} \
+            . \
+            -xr!target \
             || true
+          echo "=== 7z 包内容 ==="
+          7z l /tmp/output/thingino-xiaomi-xiaofang-t20l.7z
           ls -lh /tmp/output/
 
       - name: Upload 7z package
         uses: actions/upload-artifact@v7.0.0
         with:
-          name: thingino-xiaomi-xiaofang-t20l-7z
+          name: thingino-xiaomi-xiaofang-t20l-all
           path: /tmp/output/thingino-xiaomi-xiaofang-t20l.7z
           retention-days: 30
