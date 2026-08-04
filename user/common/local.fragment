@@ -1,3 +1,5 @@
+# thingino-firmware/user/common/local.fragment
+#
 # === 常用工具 ===
 BR2_PACKAGE_HTOP=y
 BR2_PACKAGE_SCREEN=y
