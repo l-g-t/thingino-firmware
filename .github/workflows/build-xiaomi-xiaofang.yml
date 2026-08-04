@@ -46,7 +46,17 @@ jobs:
       image: debian:forky
 
     steps:
-      # ── 1. 安装构建依赖 ──────────────────────────────────────────────────
+      # ── 1. 安装 GitHub CLI (debian:forky 官方源没有 gh) ──────────────────
+      - name: Install GitHub CLI
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends curl ca-certificates
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+
+      # ── 2. 安装构建依赖 ──────────────────────────────────────────────────
       - name: Install build dependencies
         run: |
           apt-get update
@@ -62,7 +72,7 @@ jobs:
           echo ${{ env.TZ }} > /etc/timezone
           DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive tzdata
 
-      # ── 2. 检出代码 ──────────────────────────────────────────────────────
+      # ── 3. 检出代码 ──────────────────────────────────────────────────────
       - name: Setup git workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
@@ -73,13 +83,13 @@ jobs:
           ref: ${{ github.event.inputs.branch }}
           fetch-depth: '1'
 
-      # ── 3. 准备缓存目录 ──────────────────────────────────────────────────
+      # ── 4. 准备缓存目录 ──────────────────────────────────────────────────
       - name: Setup cache directories
         run: |
           mkdir -p ~/.buildroot-ccache
           mkdir -p ~/dl
 
-      # ── 4. 恢复 ccache (从上游 rolling release 加速编译) ──────────────────
+      # ── 5. 恢复 ccache (从上游 rolling release 加速编译) ──────────────────
       - name: Restore ccache
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -99,7 +109,7 @@ jobs:
             echo "No ccache found — cold build (首次编译会慢一些)"
           fi
 
-      # ── 5. 获取 buildroot 下载缓存 (大幅加速源码下载) ─────────────────────
+      # ── 6. 获取 buildroot 下载缓存 (大幅加速源码下载) ─────────────────────
       - name: Fetch buildroot-dl-cache
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -140,7 +150,7 @@ jobs:
           fi
           echo "dl-cache restored: $(find ~/dl -type f 2>/dev/null | wc -l) files"
 
-      # ── 6. 编译固件 ─────────────────────────────────────────────────────
+      # ── 7. 编译固件 ─────────────────────────────────────────────────────
       - name: Build firmware
         if: ${{ github.event.inputs.debug_enabled != 'true' }}
         env:
@@ -160,7 +170,7 @@ jobs:
           echo "debug rootfs" > ${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/rootfs.squashfs
           echo "debug sha" > ${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/thingino-${BOARD}.bin.sha256sum
 
-      # ── 7. 验证并收集固件产物 ────────────────────────────────────────────
+      # ── 8. 验证并收集固件产物 ────────────────────────────────────────────
       - name: Validate and collect firmware artifacts
         run: |
           BOARD="xiaomi_xiaofang_t20l_jxf23_rtl8189ftv"
@@ -192,7 +202,7 @@ jobs:
           ls -lh "$FULL_FW_KERNEL" 2>/dev/null
           ls -lh "$FULL_FW_ROOTFS" 2>/dev/null
 
-      # ── 8. 上传固件到 GitHub Artifact (完成后可直接下载) ──────────────────
+      # ── 9. 上传固件到 GitHub Artifact (完成后可直接下载) ──────────────────
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v7.0.0
         with:
@@ -205,7 +215,7 @@ jobs:
             ${{ env.FULL_FW_SHA }}
           retention-days: 30
 
-      # ── 9. 打包为 7z 便于下载 ────────────────────────────────────────────
+      # ── 10. 打包为 7z 便于下载 ───────────────────────────────────────────
       - name: Package firmware as 7z
         run: |
           mkdir -p /tmp/output
