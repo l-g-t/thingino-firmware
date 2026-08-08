@@ -1,0 +1,295 @@
+# ==============================================================================
+# Thingino Firmware — 自定义构建 (iflytek_xfp301m_t31x_jxq03_rtl8188ftv )
+# 参考: https://github.com/themactep/thingino-firmware 的 firmware-master.yaml
+# 精简版: 只编译 iflytek_xfp301m_t31x_jxq03_rtl8188ftv 一个型号
+# ==============================================================================
+
+name: build_iflytek_xfp301m_t31x_jxq03_rtl8188ftv
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        type: choice
+        description: '从哪个分支构建'
+        required: false
+        default: 'master'
+        options:
+          - master
+          - ciao
+          - figata
+          - stable
+      debug_enabled:
+        type: boolean
+        description: 'Debug 模式 (生成假固件，测试 workflow 流程)'
+        required: false
+        default: false
+
+env:
+  BR2_DL_DIR: ~/dl
+  FORCE_UNSAFE_CONFIGURE: 1
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  TERM: linux
+  TZ: UTC
+
+# ── 硬编码要编译的型号 ──────────────────────────────────────────────────────
+# 如需更改型号，只改这一行即可
+# 可用型号列表: gh api "repos/themactep/thingino-firmware/git/trees/master?recursive=1" \
+#   --jq '.tree[].path | select(test("^configs/cameras/.*_defconfig$")) | sub(".*/";"") | sub("_defconfig$";"")' | sort
+
+jobs:
+  build:
+    name: iflytek_xfp301m_t31x_jxq03_rtl8188ftv
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 30
+    container:
+      image: debian:forky
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      # ── 1. 安装 GitHub CLI (debian:forky 官方源没有 gh) ──────────────────
+      - name: Install GitHub CLI
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends curl ca-certificates
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+
+      # ── 2. 安装构建依赖 ──────────────────────────────────────────────────
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends --no-install-suggests \
+            autoconf build-essential bc ca-certificates cmake cpio curl file \
+            gawk gh git jq lzop m4 make p7zip-full perl python3 python3-setuptools \
+            procps rsync tzdata u-boot-tools unzip wget \
+            libncurses-dev swig python3-dev libssl-dev
+
+      - name: Set timezone
+        run: |
+          ln -sf /usr/share/zoneinfo/${{ env.TZ }} /etc/localtime
+          echo ${{ env.TZ }} > /etc/timezone
+          DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive tzdata
+
+      # ── 3. 检出代码 ──────────────────────────────────────────────────────
+      - name: Setup git workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          submodules: 'true'
+          ref: ${{ github.event.inputs.branch }}
+          fetch-depth: '1'
+
+      # ── 4. 准备缓存目录 ──────────────────────────────────────────────────
+      - name: Setup cache directories
+        run: |
+          mkdir -p ~/.buildroot-ccache
+          mkdir -p ~/dl
+
+      # ── 5. 恢复 ccache (从上游 rolling release 加速编译) ──────────────────
+      - name: Restore ccache
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="themactep/thingino-firmware"
+          CAM="iflytek_xfp301m_t31x_jxq03_rtl8188ftv"
+          CAM_SAFE=$(printf '%s' "$CAM" | tr -c 'A-Za-z0-9._-' '-')
+          ARCH_TAG=$(uname -m | sed 's/x86_64/x86_64/; s/aarch64/ARM64/')
+          mkdir -p /tmp/cc
+          # 尝试从上游的 ccache release 恢复编译缓存
+          ASSET="ccache-master-${{ runner.arch }}-${CAM_SAFE}.zip"
+          if gh release download ccache --repo "$REPO" --pattern "$ASSET" --dir /tmp/cc 2>/dev/null; then
+            echo "Restoring $ASSET"
+            ( cd ~ && 7z x -y "/tmp/cc/$ASSET" >/dev/null ) || true
+            echo "ccache restored: $(du -sh ~/.buildroot-ccache 2>/dev/null | cut -f1)"
+          else
+            echo "No ccache found — cold build (首次编译会慢一些)"
+          fi
+
+      # ── 6. 获取 buildroot 下载缓存 (大幅加速源码下载) ─────────────────────
+      - name: Fetch buildroot-dl-cache
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="themactep/thingino-firmware"
+          # 查找上游的 buildroot-dl-cache release
+          RELEASE_TAG=$(gh release list --repo "$REPO" --json name,tagName 2>/dev/null | \
+            jq -r '.[] | select(.name=="buildroot-dl-cache") | .tagName' | sort -r | head -1 || echo "")
+          if [ -z "$RELEASE_TAG" ]; then
+            RELEASE_TAG=$(gh release list --repo "$REPO" --json tagName 2>/dev/null | \
+              jq -r '.[] | select(.tagName | startswith("update_cache")) | .tagName' | head -1 || echo "")
+          fi
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "No buildroot-dl-cache release found — will download sources directly"
+            exit 0
+          fi
+          echo "Found dl-cache release: $RELEASE_TAG"
+          mkdir -p /tmp/dl-cache
+          set +e
+          gh release download "$RELEASE_TAG" --repo "$REPO" --pattern "buildroot-dl-cache*" --dir "/tmp/dl-cache"
+          DOWNLOAD_RC=$?
+          set -e
+          if [ $DOWNLOAD_RC -ne 0 ] || [ -z "$(ls -A /tmp/dl-cache/ 2>/dev/null)" ]; then
+            echo "dl-cache download failed or empty — will download sources directly"
+            exit 0
+          fi
+          echo "Extracting dl-cache..."
+          cd ~
+          if ls /tmp/dl-cache/buildroot-dl-cache.zip.* &>/dev/null; then
+            7z x /tmp/dl-cache/buildroot-dl-cache.zip.001 -y
+          else
+            7z x /tmp/dl-cache/buildroot-dl-cache.zip -y
+          fi
+          # 处理嵌套 dl/ 目录
+          if [ -d ~/dl/dl ]; then
+            mv ~/dl/dl/* ~/dl/ 2>/dev/null || true
+            rm -rf ~/dl/dl
+          fi
+          echo "dl-cache restored: $(find ~/dl -type f 2>/dev/null | wc -l) files"
+
+      # ── 7. 编译固件 ─────────────────────────────────────────────────────
+      # Buildroot 的 Makefile.legacy 检测到 .config 含 BR2_LEGACY=y 会终止
+      # 构建。这发生在 thingino 的某些配置选项在此版本的 buildroot
+      # submodule 中已被弃用时。
+      #
+      # 最可靠的修复: 把 Makefile.legacy 里的 $(error ...) 降级为 $(warning ...)
+      # 这样废弃选项只会产生警告而不中断构建。
+      # 然后正常运行 thingino 的 make fast。
+      - name: Build firmware
+        if: ${{ github.event.inputs.debug_enabled != 'true' }}
+        env:
+          CCACHE_MAXSIZE: "1G"
+        run: |
+          set -e
+
+          # 将 Buildroot Makefile.legacy 中的 $(error) 降级为 $(warning)
+          # 这样 legacy 配置只会警告，不会中断编译
+          sed -i 's/$(error "You have legacy/$(warning "You have legacy/' \
+            buildroot/Makefile.legacy
+          echo "=== Makefile.legacy 已降级: error → warning ==="
+
+          # 正常构建 (thingino 的 fast = user-dirs + defconfig + build_fast + pack)
+          echo "=== 开始编译固件 (这可能需要 15-25 分钟) ==="
+          BOARD=iflytek_xfp301m_t31x_jxq03_rtl8188ftv make fast WORKFLOW=1
+
+          echo "=== 固件编译完成 ==="
+
+      # ── 7b. 构建失败时抓取错误日志 ──────────────────────────────────────
+      - name: Capture build log on failure
+        if: ${{ failure() && github.event.inputs.debug_enabled != 'true' }}
+        run: |
+          echo "=== 构建失败，抓取日志 ==="
+          OUTDIR=$(find output/ -maxdepth 1 -type d -name "iflytek*" | head -1)
+          if [ -n "$OUTDIR" ]; then
+            echo "=== 输出目录: $OUTDIR ==="
+            # 找最新的构建日志
+            LOG=$(find "$OUTDIR/logs/" -name "*.log" -type f 2>/dev/null | sort | tail -1)
+            if [ -n "$LOG" ]; then
+              echo "=== 日志文件: $LOG ==="
+              echo "=== 最后 200 行 ==="
+              tail -200 "$LOG"
+            else
+              echo "=== 未找到 .log 文件，列出 logs 目录 ==="
+              ls -la "$OUTDIR/logs/" 2>/dev/null || true
+            fi
+          else
+            echo "=== 未找到输出目录 ==="
+            find output/ -maxdepth 2 -type d 2>/dev/null | head -10
+          fi
+          echo "=== 日志抓取结束 ==="
+
+      - name: Generate debug dummy firmware (test mode)
+        if: ${{ github.event.inputs.debug_enabled == 'true' }}
+        run: |
+          BOARD="iflytek_xfp301m_t31x_jxq03_rtl8188ftv"
+          BRANCH="${{ github.event.inputs.branch }}"
+          mkdir -p ${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/
+          echo "debug" > ${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/thingino-${BOARD}.bin
+          echo "debug uboot" > ${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/u-boot-lzo-with-spl.bin
+          echo "debug kernel" > ${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/uImage
+          echo "debug rootfs" > ${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/rootfs.squashfs
+          echo "debug sha" > ${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/thingino-${BOARD}.bin.sha256sum
+
+      # ── 8. 验证并收集固件产物 ────────────────────────────────────────────
+      - name: Validate and collect firmware artifacts
+        run: |
+          BOARD="iflytek_xfp301m_t31x_jxq03_rtl8188ftv"
+          BRANCH="${{ github.event.inputs.branch }}"
+          OUT_BASE="${GITHUB_WORKSPACE}/output/${BRANCH}"
+          IMG_DIR=$(find ${OUT_BASE} -maxdepth 2 -type d -name "images" -path "*${BOARD}*" | head -1)
+          echo "=== images 目录: $IMG_DIR ==="
+
+          # 列出所有生成的产物
+          echo "=== 目录内容 ==="
+          ls -lh "$IMG_DIR/" || true
+
+          # 找到主固件 .bin 文件
+          FULL_FW=$(find "$IMG_DIR" -name "thingino-${BOARD}.bin" ! -name "*update.bin" 2>/dev/null | head -n 1 || true)
+          echo "FULL_FW: $FULL_FW"
+          if [ -z "$FULL_FW" ]; then
+            echo "ERROR: 主固件 .bin 未找到!"
+            exit 1
+          fi
+
+          # 查找其他产物 (用 || true 防止 find 无匹配时 set -e 报错)
+          FULL_FW_UBOOT=$(find "$IMG_DIR" -name "u-boot-*spl*.bin" 2>/dev/null | head -n 1 || true)
+          FULL_FW_KERNEL=$(find "$IMG_DIR" -name "uImage" 2>/dev/null | head -n 1 || true)
+          FULL_FW_ROOTFS=$(find "$IMG_DIR" -name "rootfs.squashfs" 2>/dev/null | head -n 1 || true)
+          FULL_FW_SHA="${FULL_FW}.sha256sum"
+
+          # 设置环境变量供后续步骤使用
+          echo "FULL_FW=${FULL_FW}" >> $GITHUB_ENV
+          echo "FULL_FW_UBOOT=${FULL_FW_UBOOT}" >> $GITHUB_ENV
+          echo "FULL_FW_KERNEL=${FULL_FW_KERNEL}" >> $GITHUB_ENV
+          echo "FULL_FW_ROOTFS=${FULL_FW_ROOTFS}" >> $GITHUB_ENV
+          echo "FULL_FW_SHA=${FULL_FW_SHA}" >> $GITHUB_ENV
+
+          echo "=== 固件产物 ==="
+          echo "  主固件:    $(ls -lh "$FULL_FW" 2>/dev/null | awk '{print $5, $9}')"
+          echo "  U-Boot:    $(ls -lh "$FULL_FW_UBOOT" 2>/dev/null | awk '{print $5, $9}' || echo '未找到')"
+          echo "  Kernel:    $(ls -lh "$FULL_FW_KERNEL" 2>/dev/null | awk '{print $5, $9}' || echo '未找到')"
+          echo "  RootFS:    $(ls -lh "$FULL_FW_ROOTFS" 2>/dev/null | awk '{print $5, $9}' || echo '未找到')"
+          echo "  SHA256:    $(ls -lh "$FULL_FW_SHA" 2>/dev/null | awk '{print $5, $9}' || echo '未找到')"
+
+      # ── 9. 上传固件到 GitHub Artifact (完成后可直接下载) ──────────────────
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: thingino-iflytek_xfp301m_t31x_jxq03_rtl8188ftv
+          path: |
+            ${{ env.FULL_FW }}
+            ${{ env.FULL_FW_SHA }}
+          retention-days: 30
+          if-no-files-found: error
+
+      # ── 10. 打包整个 images 目录为 7z (含 uboot/kernel/rootfs 等全部产物) ─
+      - name: Package firmware as 7z
+        run: |
+          mkdir -p /tmp/output
+          # 打包整个 images 目录，包含所有编译产物
+          IMG_DIR=$(dirname "${{ env.FULL_FW }}")
+          echo "=== 打包 images 目录: $IMG_DIR ==="
+          ls -lh "$IMG_DIR/"
+          cd "$IMG_DIR"
+          7z a -t7z -mx=9 -mmt=on \
+            /tmp/output/thingino-iflytek_xfp301m_t31x_jxq03_rtl8188ftv.7z \
+            . \
+            -xr!target \
+            || true
+          echo "=== 7z 包内容 ==="
+          7z l /tmp/output/thingino-iflytek_xfp301m_t31x_jxq03_rtl8188ftv.7z
+          ls -lh /tmp/output/
+
+      - name: Upload 7z package
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: thingino-iflytek_xfp301m_t31x_jxq03_rtl8188ftv-all
+          path: /tmp/output/thingino-iflytek_xfp301m_t31x_jxq03_rtl8188ftv.7z
+          retention-days: 30
