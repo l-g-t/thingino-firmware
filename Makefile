@@ -19,9 +19,12 @@ SCRIPTS_DIR := $(BR2_EXTERNAL)/scripts
 BUILDROOT_DIR := $(BR2_EXTERNAL)/buildroot
 BUILDROOT_OVERRIDE_PATCH_DIR := $(BR2_EXTERNAL)/package/all-patches/buildroot
 
-# Run dependency check before doing anything, but skip if WORKFLOW=1 or if .prereqs.done exists
+# Run dependency check before doing anything.
+# Skip when WORKFLOW=1, when .prereqs.done exists, or for `make update`.
 ifeq ($(WORKFLOW),)
-ifeq ($(wildcard $(CURDIR)/.prereqs.done),)
+ifneq ($(filter update,$(MAKECMDGOALS)),)
+$(info Skipping dependency check for update target)
+else ifeq ($(wildcard $(CURDIR)/.prereqs.done),)
 	_dep_check := $(shell $(SCRIPTS_DIR)/dep_check.sh>&2; echo $$?)
 	ifneq ($(lastword $(_dep_check)),0)
 	$(error Dependency check failed)
@@ -178,7 +181,7 @@ TOOLCHAIN_LIBC_RAW := $(if $(CAMERA_CONFIG_REAL),$(strip $(shell $(SCRIPTS_DIR)/
 
 TOOLCHAIN_TYPE_RAW := $(if $(TOOLCHAIN_TYPE_RAW),$(TOOLCHAIN_TYPE_RAW),EXTERNAL)
 TOOLCHAIN_GCC_RAW := $(if $(TOOLCHAIN_GCC_RAW),$(TOOLCHAIN_GCC_RAW),16)
-TOOLCHAIN_LIBC_RAW := $(if $(TOOLCHAIN_LIBC_RAW),$(TOOLCHAIN_LIBC_RAW),MUSL)
+TOOLCHAIN_LIBC_RAW := $(if $(TOOLCHAIN_LIBC_RAW),$(TOOLCHAIN_LIBC_RAW),UCLIBC)
 
 TOOLCHAIN_TYPE_TAG := $(if $(filter BUILDROOT,$(TOOLCHAIN_TYPE_RAW)),br,$(if $(filter EXTERNAL,$(TOOLCHAIN_TYPE_RAW)),ext,$(if $(filter LOCAL,$(TOOLCHAIN_TYPE_RAW)),loc,ext)))
 TOOLCHAIN_LIBC_TAG := $(shell echo "$(TOOLCHAIN_LIBC_RAW)" | tr 'A-Z' 'a-z')
@@ -186,7 +189,7 @@ TOOLCHAIN_FRAGMENT_FILE := configs/fragments/toolchain/$(TOOLCHAIN_TYPE_TAG)-gcc
 
 # Resolve U-Boot version fragment
 THINGINO_UBOOT_VERSION_RAW := $(if $(CAMERA_CONFIG_REAL),$(strip $(shell grep -h '^BR2_THINGINO_UBOOT_VERSION_' $(EARLY_TOOLCHAIN_INPUT_FILES) 2>/dev/null | grep '=y$$' | head -1 | sed 's/.*UBOOT_VERSION_\(.*\)=y/\1/')))
-THINGINO_UBOOT_VERSION_RAW := $(if $(THINGINO_UBOOT_VERSION_RAW),$(THINGINO_UBOOT_VERSION_RAW),2026_04)
+THINGINO_UBOOT_VERSION_RAW := $(if $(THINGINO_UBOOT_VERSION_RAW),$(THINGINO_UBOOT_VERSION_RAW),2026_07)
 THINGINO_UBOOT_VERSION_TAG := $(if $(filter 2026_07,$(THINGINO_UBOOT_VERSION_RAW)),2026-07,$(if $(filter 2026_04,$(THINGINO_UBOOT_VERSION_RAW)),2026-04,$(if $(filter 2013_07,$(THINGINO_UBOOT_VERSION_RAW)),2013-07,$(if $(filter CUSTOM_FORK,$(THINGINO_UBOOT_VERSION_RAW)),custom-fork,$(shell echo "$(THINGINO_UBOOT_VERSION_RAW)" | tr 'A-Z' 'a-z' | tr '_' '-')))))
 THINGINO_UBOOT_FRAGMENT_FILE := configs/fragments/uboot/v$(THINGINO_UBOOT_VERSION_TAG).fragment
 
@@ -206,6 +209,13 @@ $(info TOOLCHAIN_LIBC: $(TOOLCHAIN_LIBC))
 endif
 
 # working directory - set after CAMERA is defined
+# THINGINO_-prefixed variants allow safe overrides from the global environment
+ifdef THINGINO_OUTPUT_ROOT_DIR
+OUTPUT_ROOT_DIR := $(THINGINO_OUTPUT_ROOT_DIR)
+endif
+ifdef THINGINO_OUTPUT_DIR
+OUTPUT_DIR := $(THINGINO_OUTPUT_DIR)
+endif
 OUTPUT_ROOT_DIR ?= $(BR2_EXTERNAL)/output
 OUTPUT_BASE_DIR = $(OUTPUT_ROOT_DIR)/$(GIT_BRANCH)/$(CAMERA)-$(KERNEL_VERSION)-$(TOOLCHAIN_LIBC)
 ifeq ($(SKIP_CAMERA_SELECTION),)
@@ -235,7 +245,7 @@ endif
 # Capped XBurst1 SoCs (T10/T20/T21/T30) boot a TPL chain with modern u-boot; allow legacy names
 ifneq ($(THINGINO_UBOOT_VERSION_TAG),2013-07)
 ifneq ($(SOC_MODEL),)
-UBOOT_BIN_NAME := $(shell $(SCRIPTS_DIR)/get_soc_params.sh $(SOC_MODEL) uboot_image 2>/dev/null || echo u-boot-with-spl-lzma.bin)
+UBOOT_BIN_NAME := $(or $(SOC_UBOOT_BIN),u-boot-with-spl-lzma.bin)
 endif
 endif
 
