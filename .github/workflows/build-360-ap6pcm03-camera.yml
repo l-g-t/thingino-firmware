@@ -233,6 +233,21 @@ jobs:
           echo "=== 固件编译完成 ==="
 
 
+      - name: Repack data.jffs2 with correct permissions
+        run: |
+          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031"
+          BRANCH="${{ github.event.inputs.branch }}"
+          OVERLAY_DIR=$(find "output/${BRANCH}/${BOARD}" -maxdepth 3 -type d -name overlay -path "*data*" | head -1)
+          echo "=== 补权限: $OVERLAY_DIR ==="
+          find "$OVERLAY_DIR" -path "*init.d/*" -type f -exec chmod +x {} \;
+
+          JFFS2_OUT=$(find "output/${BRANCH}/${BOARD}" -name "data.jffs2" | head -1)
+          echo "=== 原 mkfs.jffs2 参数(从上次构建日志里抄) ==="
+          # 需要你从上一次成功构建的详细日志里，搜 "mkfs.jffs2" 找到真实参数（block size、pad、endianness）
+          # 例如: mkfs.jffs2 -e 0x10000 --pad=0x60000 -o "$JFFS2_OUT" -d "$OVERLAY_DIR"
+
+    
+
       - name: Verify S99fixflip permission in build output
         if: ${{ github.event.inputs.debug_enabled != 'true' }}
         run: |
