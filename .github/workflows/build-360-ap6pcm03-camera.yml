@@ -238,11 +238,27 @@ jobs:
         run: |
           BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031"
           BRANCH="${{ github.event.inputs.branch }}"
-          RCS=$(find "output/${BRANCH}/${BOARD}" -path "*etc/init.d/rcS" -o -path "*etc/inittab" 2>/dev/null)
-          echo "$RCS" | while read -r f; do
-            echo "=== $f ==="
-            cat "$f" 2>/dev/null
-          done
+          OUT_DIR="output/${BRANCH}/${BOARD}"
+
+          if [ ! -d "$OUT_DIR" ]; then
+            echo "::error::输出目录不存在: $OUT_DIR ，说明这一步跑在了 Build firmware 之前，或者构建没有产出预期的目录结构"
+            find output -maxdepth 3 -type d 2>/dev/null
+            exit 1
+          fi
+
+          echo "=== 查找 rcS / inittab ==="
+          RCS=$(find "$OUT_DIR" \( -path "*etc/init.d/rcS" -o -path "*etc/inittab" \) 2>/dev/null || true)
+
+          if [ -z "$RCS" ]; then
+            echo "没找到 rcS 或 inittab —— Thingino 可能不是走传统 BusyBox init 机制"
+            echo "=== 改查 /init 本体，看它怎么调度 init.d 脚本 ==="
+            INIT=$(find "$OUT_DIR" -maxdepth 3 -name "init" -type f 2>/dev/null | head -1)
+            [ -n "$INIT" ] && echo "=== $INIT ===" && cat "$INIT" 2>/dev/null
+          else
+            echo "$RCS" | while IFS= read -r f; do
+              [ -n "$f" ] && echo "=== $f ===" && cat "$f" 2>/dev/null
+            done
+          fi
       # <<< 插入结束 >>>
 
       - name: Verify S99fixflip permission in build output
