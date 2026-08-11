@@ -233,40 +233,25 @@ jobs:
           echo "=== 固件编译完成 ==="
 
       # <<< 插入这里 >>>
-      - name: Inspect init runner mechanism
+      - name: Resolve real output directory
         if: ${{ github.event.inputs.debug_enabled != 'true' }}
         run: |
           BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031"
           BRANCH="${{ github.event.inputs.branch }}"
-          OUT_DIR="output/${BRANCH}/${BOARD}"
-
-          if [ ! -d "$OUT_DIR" ]; then
-            echo "::error::输出目录不存在: $OUT_DIR ，说明这一步跑在了 Build firmware 之前，或者构建没有产出预期的目录结构"
-            find output -maxdepth 3 -type d 2>/dev/null
+          OUT_DIR=$(find "output/${BRANCH}" -maxdepth 1 -type d -name "${BOARD}*" | head -1)
+          if [ -z "$OUT_DIR" ]; then
+            echo "::error::找不到 ${BOARD} 对应的输出目录，实际存在的目录如下："
+            find "output/${BRANCH}" -maxdepth 1 -type d 2>/dev/null
             exit 1
           fi
-
-          echo "=== 查找 rcS / inittab ==="
-          RCS=$(find "$OUT_DIR" \( -path "*etc/init.d/rcS" -o -path "*etc/inittab" \) 2>/dev/null || true)
-
-          if [ -z "$RCS" ]; then
-            echo "没找到 rcS 或 inittab —— Thingino 可能不是走传统 BusyBox init 机制"
-            echo "=== 改查 /init 本体，看它怎么调度 init.d 脚本 ==="
-            INIT=$(find "$OUT_DIR" -maxdepth 3 -name "init" -type f 2>/dev/null | head -1)
-            [ -n "$INIT" ] && echo "=== $INIT ===" && cat "$INIT" 2>/dev/null
-          else
-            echo "$RCS" | while IFS= read -r f; do
-              [ -n "$f" ] && echo "=== $f ===" && cat "$f" 2>/dev/null
-            done
-          fi
+          echo "真实输出目录: $OUT_DIR"
+          echo "OUT_DIR=${OUT_DIR}" >> "$GITHUB_ENV"
       # <<< 插入结束 >>>
 
       - name: Verify S99fixflip permission in build output
         if: ${{ github.event.inputs.debug_enabled != 'true' }}
         run: |
-          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031"
-          BRANCH="${{ github.event.inputs.branch }}"
-          F=$(find "output/${BRANCH}/${BOARD}" -path "*etc/init.d/S99fixflip" 2>/dev/null | head -1)
+          F=$(find "${{ env.OUT_DIR }}" -path "*etc/init.d/S99fixflip" 2>/dev/null | head -1)
           if [ -z "$F" ]; then
             echo "::warning::没在构建产物里找到 S99fixflip，overlay 可能没被正确读取"
           else
@@ -279,6 +264,20 @@ jobs:
             fi
           fi
 
+      - name: Inspect init runner mechanism
+        if: ${{ github.event.inputs.debug_enabled != 'true' }}
+        run: |
+          RCS=$(find "${{ env.OUT_DIR }}" \( -path "*etc/init.d/rcS" -o -path "*etc/inittab" \) 2>/dev/null || true)
+          if [ -z "$RCS" ]; then
+            echo "没找到 rcS 或 inittab"
+            INIT=$(find "${{ env.OUT_DIR }}" -maxdepth 3 -name "init" -type f 2>/dev/null | head -1)
+            [ -n "$INIT" ] && echo "=== $INIT ===" && cat "$INIT" 2>/dev/null
+          else
+            echo "$RCS" | while IFS= read -r f; do
+              [ -n "$f" ] && echo "=== $f ===" && cat "$f" 2>/dev/null
+            done
+          fi
+
           
 
       # ── 7b. 构建失败时抓取错误日志 ────────────────────────────────────
@@ -286,7 +285,12 @@ jobs:
         if: ${{ failure() && github.event.inputs.debug_enabled != 'true' }}
         run: |
           echo "=== 构建失败，抓取日志 ==="
-          OUTDIR=$(find output/ -maxdepth 1 -type d -name "360*" | head -1)
+          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031"
+          BRANCH="${{ github.event.inputs.branch }}"
+          OUTDIR="${{ env.OUT_DIR }}"
+          if [ -z "$OUTDIR" ]; then
+            OUTDIR=$(find "output/${BRANCH}" -maxdepth 1 -type d -name "${BOARD}*" 2>/dev/null | head -1)
+          fi
           if [ -n "$OUTDIR" ]; then
             echo "=== 输出目录: $OUTDIR ==="
             LOG=$(find "$OUTDIR/logs/" -name "*.log" -type f 2>/dev/null | sort | tail -1)
