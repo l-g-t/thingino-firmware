@@ -176,11 +176,13 @@ jobs:
           CCACHE_MAXSIZE: "1G"
         run: |
           set -e
+          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031" CAMERA_SUBDIR=configs/cameras-exp make -n fast WORKFLOW=1 2>&1 | grep -i "CAMERA_CONFIG ="
+ 
           sed -i 's/$(error "You have legacy/$(warning "You have legacy/' \
             buildroot/Makefile.legacy
           echo "=== Makefile.legacy 已降级: error → warning ==="
           echo "=== 开始编译固件 (这可能需要 15-25 分钟；实验型号+冷 ccache 可能更久) ==="
-          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031" make fast WORKFLOW=1
+          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031" CAMERA_SUBDIR=configs/cameras-exp make fast WORKFLOW=1
           echo "=== 固件编译完成 ==="
 
       # ── 7b. 构建失败时抓取错误日志 ────────────────────────────────────
