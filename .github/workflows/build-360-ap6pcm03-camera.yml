@@ -176,7 +176,6 @@ jobs:
           CCACHE_MAXSIZE: "1G"
         run: |
           set -e
-          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031" CAMERA_SUBDIR=configs/cameras-exp make -n fast WORKFLOW=1 2>&1 | grep -i "CAMERA_CONFIG ="
  
           sed -i 's/$(error "You have legacy/$(warning "You have legacy/' \
             buildroot/Makefile.legacy
