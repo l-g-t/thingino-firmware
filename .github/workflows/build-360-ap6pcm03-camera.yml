@@ -154,6 +154,21 @@ jobs:
           fi
           echo "dl-cache restored: $(find ~/dl -type f 2>/dev/null | wc -l) files"
 
+      - name: Debug camera config lookup
+        run: |
+          echo "=== 1. 仓库里实际存在的相关文件/目录 ==="
+          find configs -iname "*ap6pcm03*" 2>/dev/null
+          echo ""
+          echo "=== 2. 精确按 defconfig 命名规则查找 ==="
+          find configs -type f -name "360_ap6pcm03_t31x_gc4653_eth+atbm6031_defconfig"
+          echo ""
+          echo "=== 3. board.mk 里 CAMERA_SUBDIR 的定义 ==="
+          grep -rn "CAMERA_SUBDIR" Makefile* board.mk *.mk 2>/dev/null
+          echo ""
+          echo "=== 4. 当前分支 / commit ==="
+          git branch --show-current
+          git log -1 --oneline
+
       # ── 7. 编译固件 ───────────────────────────────────────────────────
       - name: Build firmware
         if: ${{ github.event.inputs.debug_enabled != 'true' }}
