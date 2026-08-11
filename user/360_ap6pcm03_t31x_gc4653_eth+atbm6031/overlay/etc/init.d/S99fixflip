@@ -1,0 +1,8 @@
+#!/bin/sh
+case "$1" in
+  start)
+    sleep 3
+    raptorctl rvd set-hflip 0 1
+    raptorctl rvd set-vflip 0 1
+    ;;
+esac
