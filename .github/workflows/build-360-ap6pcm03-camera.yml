@@ -232,21 +232,18 @@ jobs:
           BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031" make fast WORKFLOW=1 CAMERA_SUBDIR=configs/cameras-exp
           echo "=== 固件编译完成 ==="
 
-
-      - name: Repack data.jffs2 with correct permissions
+      # <<< 插入这里 >>>
+      - name: Inspect init runner mechanism
+        if: ${{ github.event.inputs.debug_enabled != 'true' }}
         run: |
           BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031"
           BRANCH="${{ github.event.inputs.branch }}"
-          OVERLAY_DIR=$(find "output/${BRANCH}/${BOARD}" -maxdepth 3 -type d -name overlay -path "*data*" | head -1)
-          echo "=== 补权限: $OVERLAY_DIR ==="
-          find "$OVERLAY_DIR" -path "*init.d/*" -type f -exec chmod +x {} \;
-
-          JFFS2_OUT=$(find "output/${BRANCH}/${BOARD}" -name "data.jffs2" | head -1)
-          echo "=== 原 mkfs.jffs2 参数(从上次构建日志里抄) ==="
-          # 需要你从上一次成功构建的详细日志里，搜 "mkfs.jffs2" 找到真实参数（block size、pad、endianness）
-          # 例如: mkfs.jffs2 -e 0x10000 --pad=0x60000 -o "$JFFS2_OUT" -d "$OVERLAY_DIR"
-
-    
+          RCS=$(find "output/${BRANCH}/${BOARD}" -path "*etc/init.d/rcS" -o -path "*etc/inittab" 2>/dev/null)
+          echo "$RCS" | while read -r f; do
+            echo "=== $f ==="
+            cat "$f" 2>/dev/null
+          done
+      # <<< 插入结束 >>>
 
       - name: Verify S99fixflip permission in build output
         if: ${{ github.event.inputs.debug_enabled != 'true' }}
@@ -265,6 +262,8 @@ jobs:
               exit 1
             fi
           fi
+
+          
 
       # ── 7b. 构建失败时抓取错误日志 ────────────────────────────────────
       - name: Capture build log on failure
