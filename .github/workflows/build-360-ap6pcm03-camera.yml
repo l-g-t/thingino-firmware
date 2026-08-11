@@ -81,7 +81,45 @@ jobs:
 
       - name: Ensure overlay scripts are executable
         run: |
-          chmod +x "user/360_ap6pcm03_t31x_gc4653_eth+atbm6031/overlay/etc/init.d/"* 2>/dev/null || true
+          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031"
+
+          echo "=== 搜索该板子的 overlay 目录 ==="
+          OVERLAY_DIRS=$(find . -type d -path "*${BOARD}*overlay*" 2>/dev/null)
+          echo "$OVERLAY_DIRS"
+
+          if [ -z "$OVERLAY_DIRS" ]; then
+            echo "::error::找不到 ${BOARD} 对应的 overlay 目录，请检查 overlay 是否真实存在、路径是否和之前假设的 user/<BOARD>/overlay 不一样"
+            find . -iname "*${BOARD}*" -maxdepth 4
+            exit 1
+          fi
+
+          echo "=== 在这些目录下查找 init.d 脚本并 chmod ==="
+          FOUND=0
+          while IFS= read -r dir; do
+            SCRIPTS=$(find "$dir" -path "*etc/init.d/*" -type f 2>/dev/null)
+            if [ -n "$SCRIPTS" ]; then
+              echo "$SCRIPTS" | while IFS= read -r f; do
+                chmod +x "$f"
+                echo "已 chmod +x: $f"
+              done
+              FOUND=1
+            fi
+          done <<< "$OVERLAY_DIRS"
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "::error::overlay 目录存在，但里面没找到 etc/init.d/ 下的脚本，路径假设可能还是错的"
+            exit 1
+          fi
+
+          echo "=== 校验 S99fixflip 确实已经可执行 ==="
+          S99=$(find . -path "*${BOARD}*" -path "*etc/init.d/S99fixflip" 2>/dev/null | head -1)
+          if [ -n "$S99" ]; then
+            ls -l "$S99"
+          else
+            echo "::warning::没在 overlay 里直接找到 S99fixflip，确认一下文件名/路径是否正确"
+          fi
+
+    
 
       # ── 3b. 校验目标 defconfig 是否存在（新增，防止改名/路径打错）──────
       - name: Verify camera config exists
