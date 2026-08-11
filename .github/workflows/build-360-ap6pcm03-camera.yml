@@ -170,19 +170,27 @@ jobs:
           git log -1 --oneline
 
       # ── 7. 编译固件 ───────────────────────────────────────────────────
+
+      - name: Verify CAMERA_SUBDIR takes effect
+        run: |
+          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031" make -p fast WORKFLOW=1 CAMERA_SUBDIR=configs/cameras-exp 2>/dev/null \
+            | grep -m1 "^CAMERA_SUBDIR " || echo "(未从 -p 输出里找到，不代表一定失败)"
+            
+
       - name: Build firmware
         if: ${{ github.event.inputs.debug_enabled != 'true' }}
         env:
           CCACHE_MAXSIZE: "1G"
         run: |
           set -e
- 
           sed -i 's/$(error "You have legacy/$(warning "You have legacy/' \
             buildroot/Makefile.legacy
           echo "=== Makefile.legacy 已降级: error → warning ==="
           echo "=== 开始编译固件 (这可能需要 15-25 分钟；实验型号+冷 ccache 可能更久) ==="
-          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031" CAMERA_SUBDIR=configs/cameras-exp make fast WORKFLOW=1
+          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031" make fast WORKFLOW=1 CAMERA_SUBDIR=configs/cameras-exp
           echo "=== 固件编译完成 ==="
+
+
 
       # ── 7b. 构建失败时抓取错误日志 ────────────────────────────────────
       - name: Capture build log on failure
