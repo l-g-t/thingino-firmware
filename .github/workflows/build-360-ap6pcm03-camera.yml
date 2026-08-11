@@ -1,0 +1,278 @@
+# ==============================================================================
+# Thingino Firmware — 自定义构建 (360 AP6PCM03 T31X, ETH+WiFi)
+# 参考: build-360-ap1pa3-camera.yml
+# 精简版: 只编译 360_ap6pcm03_t31x_gc4653_eth+atbm6031 一个型号（cameras-exp）
+# ==============================================================================
+name: build-360-AP6PCM03-T31X-ETH-WIFI
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        type: choice
+        description: '从哪个分支构建'
+        required: false
+        default: 'master'
+        options:
+          - master
+          - ciao
+          - figata
+          - stable
+      debug_enabled:
+        type: boolean
+        description: 'Debug 模式 (生成假固件，测试 workflow 流程)'
+        required: false
+        default: false
+
+env:
+  BR2_DL_DIR: ~/dl
+  FORCE_UNSAFE_CONFIGURE: 1
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  TERM: linux
+  TZ: UTC
+
+jobs:
+  build:
+    name: 360-AP6PCM03-T31X-ETH-WIFI
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 30
+    container:
+      image: debian:forky
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # ── 1. 安装 GitHub CLI ──────────────────────────────────────────────
+      - name: Install GitHub CLI
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends curl ca-certificates
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+
+      # ── 2. 安装构建依赖 ────────────────────────────────────────────────
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends --no-install-suggests \
+            autoconf build-essential bc ca-certificates cmake cpio curl file \
+            gawk gh git jq lzop m4 make p7zip-full perl python3 python3-setuptools \
+            procps rsync tzdata u-boot-tools unzip wget \
+            libncurses-dev swig python3-dev libssl-dev
+
+      - name: Set timezone
+        run: |
+          ln -sf /usr/share/zoneinfo/${{ env.TZ }} /etc/localtime
+          echo ${{ env.TZ }} > /etc/timezone
+          DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive tzdata
+
+      # ── 3. 检出代码 ────────────────────────────────────────────────────
+      - name: Setup git workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          submodules: 'true'
+          ref: ${{ github.event.inputs.branch }}
+          fetch-depth: '1'
+
+      # ── 3b. 校验目标 defconfig 是否存在（新增，防止改名/路径打错）──────
+      - name: Verify camera config exists
+        run: |
+          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031"
+          MATCH=$(find configs -type f -name "${BOARD}_defconfig")
+          if [ -z "$MATCH" ]; then
+            echo "::error::找不到 ${BOARD}_defconfig，请确认它在 configs/cameras-exp/ 下且 board.mk 的搜索路径覆盖了 cameras-exp"
+            find configs -maxdepth 3 -iname "*ap6pcm03*"
+            exit 1
+          fi
+          echo "Found: $MATCH"
+
+      # ── 4. 准备缓存目录 ────────────────────────────────────────────────
+      - name: Setup cache directories
+        run: |
+          mkdir -p ~/.buildroot-ccache
+          mkdir -p ~/dl
+
+      # ── 5. 恢复 ccache ─────────────────────────────────────────────────
+      - name: Restore ccache
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="themactep/thingino-firmware"
+          CAM="360_ap6pcm03_t31x_gc4653_eth+atbm6031"
+          CAM_SAFE=$(printf '%s' "$CAM" | tr -c 'A-Za-z0-9._-' '-')
+          mkdir -p /tmp/cc
+          ASSET="ccache-master-${{ runner.arch }}-${CAM_SAFE}.zip"
+          if gh release download ccache --repo "$REPO" --pattern "$ASSET" --dir /tmp/cc 2>/dev/null; then
+            echo "Restoring $ASSET"
+            ( cd ~ && 7z x -y "/tmp/cc/$ASSET" >/dev/null ) || true
+            echo "ccache restored: $(du -sh ~/.buildroot-ccache 2>/dev/null | cut -f1)"
+          else
+            echo "No ccache found for this exact board — cold build (首次编译会慢一些，这对新增/实验型号是正常现象)"
+          fi
+
+      # ── 6. 获取 buildroot 下载缓存 ────────────────────────────────────
+      - name: Fetch buildroot-dl-cache
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="themactep/thingino-firmware"
+          RELEASE_TAG=$(gh release list --repo "$REPO" --json name,tagName 2>/dev/null | \
+            jq -r '.[] | select(.name=="buildroot-dl-cache") | .tagName' | sort -r | head -1 || echo "")
+          if [ -z "$RELEASE_TAG" ]; then
+            RELEASE_TAG=$(gh release list --repo "$REPO" --json tagName 2>/dev/null | \
+              jq -r '.[] | select(.tagName | startswith("update_cache")) | .tagName' | head -1 || echo "")
+          fi
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "No buildroot-dl-cache release found — will download sources directly"
+            exit 0
+          fi
+          echo "Found dl-cache release: $RELEASE_TAG"
+          mkdir -p /tmp/dl-cache
+          set +e
+          gh release download "$RELEASE_TAG" --repo "$REPO" --pattern "buildroot-dl-cache*" --dir "/tmp/dl-cache"
+          DOWNLOAD_RC=$?
+          set -e
+          if [ $DOWNLOAD_RC -ne 0 ] || [ -z "$(ls -A /tmp/dl-cache/ 2>/dev/null)" ]; then
+            echo "dl-cache download failed or empty — will download sources directly"
+            exit 0
+          fi
+          echo "Extracting dl-cache..."
+          cd ~
+          if ls /tmp/dl-cache/buildroot-dl-cache.zip.* &>/dev/null; then
+            7z x /tmp/dl-cache/buildroot-dl-cache.zip.001 -y
+          else
+            7z x /tmp/dl-cache/buildroot-dl-cache.zip -y
+          fi
+          if [ -d ~/dl/dl ]; then
+            mv ~/dl/dl/* ~/dl/ 2>/dev/null || true
+            rm -rf ~/dl/dl
+          fi
+          echo "dl-cache restored: $(find ~/dl -type f 2>/dev/null | wc -l) files"
+
+      # ── 7. 编译固件 ───────────────────────────────────────────────────
+      - name: Build firmware
+        if: ${{ github.event.inputs.debug_enabled != 'true' }}
+        env:
+          CCACHE_MAXSIZE: "1G"
+        run: |
+          set -e
+          sed -i 's/$(error "You have legacy/$(warning "You have legacy/' \
+            buildroot/Makefile.legacy
+          echo "=== Makefile.legacy 已降级: error → warning ==="
+          echo "=== 开始编译固件 (这可能需要 15-25 分钟；实验型号+冷 ccache 可能更久) ==="
+          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031" make fast WORKFLOW=1
+          echo "=== 固件编译完成 ==="
+
+      # ── 7b. 构建失败时抓取错误日志 ────────────────────────────────────
+      - name: Capture build log on failure
+        if: ${{ failure() && github.event.inputs.debug_enabled != 'true' }}
+        run: |
+          echo "=== 构建失败，抓取日志 ==="
+          OUTDIR=$(find output/ -maxdepth 1 -type d -name "360*" | head -1)
+          if [ -n "$OUTDIR" ]; then
+            echo "=== 输出目录: $OUTDIR ==="
+            LOG=$(find "$OUTDIR/logs/" -name "*.log" -type f 2>/dev/null | sort | tail -1)
+            if [ -n "$LOG" ]; then
+              echo "=== 日志文件: $LOG ==="
+              echo "=== 最后 200 行 ==="
+              tail -200 "$LOG"
+            else
+              echo "=== 未找到 .log 文件，列出 logs 目录 ==="
+              ls -la "$OUTDIR/logs/" 2>/dev/null || true
+            fi
+          else
+            echo "=== 未找到输出目录 ==="
+            find output/ -maxdepth 2 -type d 2>/dev/null | head -10
+          fi
+          echo "=== 日志抓取结束 ==="
+
+      - name: Generate debug dummy firmware (test mode)
+        if: ${{ github.event.inputs.debug_enabled == 'true' }}
+        run: |
+          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031"
+          BRANCH="${{ github.event.inputs.branch }}"
+          mkdir -p "${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/"
+          echo "debug" > "${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/thingino-${BOARD}.bin"
+          echo "debug uboot" > "${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/u-boot-lzo-with-spl.bin"
+          echo "debug kernel" > "${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/uImage"
+          echo "debug rootfs" > "${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/rootfs.squashfs"
+          echo "debug sha" > "${GITHUB_WORKSPACE}/output/${BRANCH}/${BOARD}/images/thingino-${BOARD}.bin.sha256sum"
+
+      # ── 8. 验证并收集固件产物 ──────────────────────────────────────────
+      - name: Validate and collect firmware artifacts
+        run: |
+          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031"
+          BRANCH="${{ github.event.inputs.branch }}"
+          OUT_BASE="${GITHUB_WORKSPACE}/output/${BRANCH}"
+          IMG_DIR=$(find "${OUT_BASE}" -maxdepth 2 -type d -name "images" -path "*${BOARD}*" | head -1)
+          echo "=== images 目录: $IMG_DIR ==="
+          ls -lh "$IMG_DIR/" || true
+
+          FULL_FW=$(find "$IMG_DIR" -name "thingino-${BOARD}.bin" ! -name "*update.bin" 2>/dev/null | head -n 1 || true)
+          echo "FULL_FW: $FULL_FW"
+          if [ -z "$FULL_FW" ]; then
+            echo "ERROR: 主固件 .bin 未找到!"
+            exit 1
+          fi
+
+          FULL_FW_UBOOT=$(find "$IMG_DIR" -name "u-boot-*spl*.bin" 2>/dev/null | head -n 1 || true)
+          FULL_FW_KERNEL=$(find "$IMG_DIR" -name "uImage" 2>/dev/null | head -n 1 || true)
+          FULL_FW_ROOTFS=$(find "$IMG_DIR" -name "rootfs.squashfs" 2>/dev/null | head -n 1 || true)
+          FULL_FW_SHA="${FULL_FW}.sha256sum"
+
+          echo "FULL_FW=${FULL_FW}" >> $GITHUB_ENV
+          echo "FULL_FW_UBOOT=${FULL_FW_UBOOT}" >> $GITHUB_ENV
+          echo "FULL_FW_KERNEL=${FULL_FW_KERNEL}" >> $GITHUB_ENV
+          echo "FULL_FW_ROOTFS=${FULL_FW_ROOTFS}" >> $GITHUB_ENV
+          echo "FULL_FW_SHA=${FULL_FW_SHA}" >> $GITHUB_ENV
+
+          # 供 artifact 命名使用的“安全”名字（把 + 换成 -，避免特殊字符问题）
+          BOARD_SAFE=$(printf '%s' "$BOARD" | tr -c 'A-Za-z0-9._-' '-')
+          echo "BOARD_SAFE=${BOARD_SAFE}" >> $GITHUB_ENV
+
+          echo "=== 固件产物 ==="
+          echo "  主固件: $(ls -lh "$FULL_FW" 2>/dev/null | awk '{print $5, $9}')"
+          echo "  U-Boot: $(ls -lh "$FULL_FW_UBOOT" 2>/dev/null | awk '{print $5, $9}' || echo '未找到')"
+          echo "  Kernel: $(ls -lh "$FULL_FW_KERNEL" 2>/dev/null | awk '{print $5, $9}' || echo '未找到')"
+          echo "  RootFS: $(ls -lh "$FULL_FW_ROOTFS" 2>/dev/null | awk '{print $5, $9}' || echo '未找到')"
+          echo "  SHA256: $(ls -lh "$FULL_FW_SHA" 2>/dev/null | awk '{print $5, $9}' || echo '未找到')"
+
+      # ── 9. 上传固件到 GitHub Artifact ───────────────────────────────────
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: thingino-${{ env.BOARD_SAFE }}
+          path: |
+            ${{ env.FULL_FW }}
+            ${{ env.FULL_FW_SHA }}
+          retention-days: 30
+          if-no-files-found: error
+
+      # ── 10. 打包整个 images 目录为 7z ───────────────────────────────────
+      - name: Package firmware as 7z
+        run: |
+          mkdir -p /tmp/output
+          IMG_DIR=$(dirname "${{ env.FULL_FW }}")
+          echo "=== 打包 images 目录: $IMG_DIR ==="
+          ls -lh "$IMG_DIR/"
+          cd "$IMG_DIR"
+          7z a -t7z -mx=9 -mmt=on \
+            "/tmp/output/thingino-${{ env.BOARD_SAFE }}.7z" \
+            . \
+            -xr!target \
+            || true
+          echo "=== 7z 包内容 ==="
+          7z l "/tmp/output/thingino-${{ env.BOARD_SAFE }}.7z"
+          ls -lh /tmp/output/
+
+      - name: Upload 7z package
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: thingino-${{ env.BOARD_SAFE }}-all
+          path: /tmp/output/thingino-${{ env.BOARD_SAFE }}.7z
+          retention-days: 30
