@@ -79,6 +79,10 @@ jobs:
           ref: ${{ github.event.inputs.branch }}
           fetch-depth: '1'
 
+      - name: Ensure overlay scripts are executable
+        run: |
+          chmod +x "user/360_ap6pcm03_t31x_gc4653_eth+atbm6031/overlay/etc/init.d/"* 2>/dev/null || true
+
       # ── 3b. 校验目标 defconfig 是否存在（新增，防止改名/路径打错）──────
       - name: Verify camera config exists
         run: |
@@ -191,6 +195,23 @@ jobs:
           echo "=== 固件编译完成 ==="
 
 
+      - name: Verify S99fixflip permission in build output
+        if: ${{ github.event.inputs.debug_enabled != 'true' }}
+        run: |
+          BOARD="360_ap6pcm03_t31x_gc4653_eth+atbm6031"
+          BRANCH="${{ github.event.inputs.branch }}"
+          F=$(find "output/${BRANCH}/${BOARD}" -path "*etc/init.d/S99fixflip" 2>/dev/null | head -1)
+          if [ -z "$F" ]; then
+            echo "::warning::没在构建产物里找到 S99fixflip，overlay 可能没被正确读取"
+          else
+            ls -l "$F"
+            if [ -x "$F" ]; then
+              echo "OK: S99fixflip 是可执行的"
+            else
+              echo "::error::S99fixflip 存在但不可执行，overlay 权限没生效"
+              exit 1
+            fi
+          fi
 
       # ── 7b. 构建失败时抓取错误日志 ────────────────────────────────────
       - name: Capture build log on failure
