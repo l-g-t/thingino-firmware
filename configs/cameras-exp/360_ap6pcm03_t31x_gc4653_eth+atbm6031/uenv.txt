@@ -1,0 +1,3 @@
+bootdelay=1
+gpio_default=53o
+disable_eth=true
