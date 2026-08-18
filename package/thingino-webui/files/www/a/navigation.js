@@ -73,10 +73,8 @@
       { label: "Admin profile", href: "/config-admin.html" },
     ];
 
+    settingsItems.push({ label: "Network", href: "/config-network.html" });
     settingsItems.push(
-      { label: "Network", href: "/config-network.html" },
-      { label: "Audio", href: "/config-audio.html" },
-      { label: "RTSP/ONVIF access", href: "/config-rtsp.html" },
       { label: "Remote logging", href: "/config-syslog.html" },
       { label: "Time", href: "/config-time.html" },
       { label: "Web Interface", href: "/config-webui.html" },
@@ -115,7 +113,6 @@
         items: [
           { label: "File: crontab", href: "/info.html?crontab" },
           { label: "File: onvif.json", href: "/info.html?onvif" },
-          { label: "File: prudynt.json", href: "/info.html?prudynt" },
           { label: "File: thingino.json", href: "/info.html?thingino" },
           { label: "Log: dmesg", href: "/info.html?dmesg" },
           { label: "Log: logcat", href: "/info.html?logcat" },
@@ -146,33 +143,13 @@
         type: "dropdown",
         id: "ddServices",
         label: "Services",
-        items: [
-          { label: "Timelapse Recorder", href: "/tool-timelapse.html" },
-          { label: "Video Recorder", href: "/tool-record.html" },
-          { label: "Home Assistant", href: "/config-ha.html" },
-        ],
+        items: [{ label: "Home Assistant", href: "/config-ha.html" }],
       },
       {
         type: "dropdown",
         id: "ddStreamer",
         label: "Streamer",
-        items: [
-          { label: "Image Quality", href: "/streamer-image.html" },
-          { label: "RTSP Main stream", href: "/streamer-main.html" },
-          { label: "OSD Elements", href: "/streamer-osd.html" },
-          { label: "RTSP Substream", href: "/streamer-substream.html" },
-          { label: "Sensor IQ File", href: "/streamer-sensor.html" },
-          { type: "divider" },
-          { label: "Streamer config", href: "/info.html?prudynt" },
-          { label: "Streamer log", href: "/info.html?logcat" },
-          {
-            label: "Restart streamer",
-            href: "#",
-            id: "restart-prudynt-nav",
-            className: "text-danger confirm",
-            trackActive: false,
-          },
-        ],
+        items: [],
       },
       { type: "link", label: "Preview", href: "/preview.html" },
       {
@@ -619,41 +596,6 @@
     );
   }
 
-  function attachPrudyntHandlers(nav) {
-    const restartPrudyntLink = nav.querySelector("#restart-prudynt-nav");
-    const restartPrudyntOffcanvas = nav.querySelector(
-      "#restart-prudynt-nav-offcanvas",
-    );
-
-    const restartHandler = function (e) {
-      // Let the confirmation system handle the dialog first
-      if (
-        this.classList &&
-        this.classList.contains("confirm") &&
-        this.dataset.confirmBypass !== "1"
-      ) {
-        return; // Let the confirmation system handle this click
-      }
-
-      e.preventDefault();
-      if (
-        window.thinginoFooter &&
-        typeof window.thinginoFooter.restartPrudynt === "function"
-      ) {
-        window.thinginoFooter.restartPrudynt();
-      } else {
-        console.warn("thinginoFooter.restartPrudynt not available yet");
-      }
-    };
-
-    if (restartPrudyntLink) {
-      restartPrudyntLink.addEventListener("click", restartHandler);
-    }
-    if (restartPrudyntOffcanvas) {
-      restartPrudyntOffcanvas.addEventListener("click", restartHandler);
-    }
-  }
-
   function mountNavigation() {
     const nav = buildNav(menuData);
     const placeholder = $("[data-app-nav]");
@@ -666,7 +608,6 @@
       document.body.insertAdjacentElement("afterbegin", nav);
     }
     highlightActive(nav, globalConfig.activePath);
-    attachPrudyntHandlers(nav);
     ensureControlBarScript();
   }
 

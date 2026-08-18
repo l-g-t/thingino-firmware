@@ -9,11 +9,16 @@ config BR2_PACKAGE_THINGINO_RAPTOR
 	select BR2_PACKAGE_THINGINO_RAPTOR_HAL
 	select BR2_PACKAGE_THINGINO_RAPTOR_IPC
 	select BR2_PACKAGE_THINGINO_RAPTOR_COMMON
+	select BR2_PACKAGE_THINGINO_SEND2
+	select BR2_PACKAGE_THINGINO_JCT
+	select BR2_PACKAGE_THINGINO_AGENT
 	help
 	  Raptor Streaming System (RSS) -- modular microservice streamer
 	  for Ingenic SoCs. Replaces prudynt-t with independent daemons:
 	  RVD (video), RAD (audio), RSD (RTSP), ROD (OSD), RHD (HTTP),
 	  RIC (IR-cut), RMR (recording), plus raptorctl management CLI.
+	  Selects thingino-send2 so motion alerts and WebUI Send-to pages
+	  work without the prudynt package.
 
 if BR2_PACKAGE_THINGINO_RAPTOR
 
@@ -21,6 +26,7 @@ menu "Daemon selection"
 
 config BR2_PACKAGE_THINGINO_RAPTOR_FULL
 	bool "Full (all daemons)"
+	default n if BR2_THINGINO_DEV_WEBCAM
 	default y
 	help
 	  Build and install all raptor daemons. Disable to select
@@ -50,6 +56,7 @@ config BR2_PACKAGE_THINGINO_RAPTOR_RSD555
 
 config BR2_PACKAGE_THINGINO_RAPTOR_RAD
 	bool "RAD (audio capture/speaker)"
+	default y if BR2_THINGINO_DEV_WEBCAM
 	default y if BR2_PACKAGE_THINGINO_RAPTOR_FULL
 
 config BR2_PACKAGE_THINGINO_RAPTOR_RHD
@@ -80,6 +87,7 @@ config BR2_PACKAGE_THINGINO_RAPTOR_RMD
 
 config BR2_PACKAGE_THINGINO_RAPTOR_WEBRTC
 	bool "RWD (WebRTC/WHIP server)"
+	default y if BR2_THINGINO_DEV_WEBCAM
 	default y if BR2_PACKAGE_THINGINO_RAPTOR_FULL
 	depends on BR2_PACKAGE_THINGINO_RAPTOR_TLS
 	select BR2_PACKAGE_MBEDTLS_DTLS_SRTP
@@ -98,6 +106,7 @@ config BR2_PACKAGE_THINGINO_RAPTOR_RWC
 
 config BR2_PACKAGE_THINGINO_RAPTOR_WEBTORRENT
 	bool "WebTorrent sharing (external WebRTC)"
+	default n if BR2_THINGINO_DEV_WEBCAM
 	default y if BR2_PACKAGE_THINGINO_RAPTOR_WEBRTC
 	depends on BR2_PACKAGE_THINGINO_RAPTOR_WEBRTC
 	help
@@ -140,6 +149,7 @@ menu "Codec and feature options"
 
 config BR2_PACKAGE_THINGINO_RAPTOR_AAC
 	bool "AAC audio support"
+	default n if BR2_THINGINO_DEV_WEBCAM
 	default y
 	select BR2_PACKAGE_FAAC
 	select BR2_PACKAGE_LIBHELIX_AAC

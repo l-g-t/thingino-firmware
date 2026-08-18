@@ -5,23 +5,6 @@ THINGINO_WEBUI_LICENSE = MIT
 THINGINO_WEBUI_ASSET_TAG_RAW := $(shell LC_ALL=C find $(THINGINO_WEBUI_PKGDIR)/files/www/a -type f \( -name '*.js' -o -name '*.css' \) -printf '%T@\n' 2>/dev/null | sort -nr | head -n1 | cut -d. -f1)
 THINGINO_WEBUI_ASSET_TAG := $(if $(THINGINO_WEBUI_ASSET_TAG_RAW),$(THINGINO_WEBUI_ASSET_TAG_RAW),$(shell date +%s))
 
-ifeq ($(BR2_PACKAGE_THINGINO_STREAMER_RAPTOR),y)
-THINGINO_WEBUI_PREVIEW_HTML = $(THINGINO_WEBUI_PKGDIR)/files/www/preview-raptor.html
-THINGINO_WEBUI_STREAMER = raptor
-else ifeq ($(BR2_PACKAGE_THINGINO_STREAMER_STRERO),y)
-THINGINO_WEBUI_PREVIEW_HTML = $(THINGINO_WEBUI_PKGDIR)/files/www/preview.html
-THINGINO_WEBUI_STREAMER = strero
-else ifeq ($(BR2_PACKAGE_THINGINO_STREAMER_TIMPS),y)
-THINGINO_WEBUI_PREVIEW_HTML = $(THINGINO_WEBUI_PKGDIR)/files/www/preview.html
-THINGINO_WEBUI_STREAMER = timps
-else ifeq ($(BR2_PACKAGE_THINGINO_STREAMER_NONE),y)
-THINGINO_WEBUI_PREVIEW_HTML = $(THINGINO_WEBUI_PKGDIR)/files/www/preview.html
-THINGINO_WEBUI_STREAMER = none
-else
-THINGINO_WEBUI_PREVIEW_HTML = $(THINGINO_WEBUI_PKGDIR)/files/www/preview.html
-THINGINO_WEBUI_STREAMER = prudynt
-endif
-
 define THINGINO_WEBUI_APPLY_ASSET_TAG
 	@asset_tag="$(THINGINO_WEBUI_ASSET_TAG)"; \
 	root="$(TARGET_DIR)/var/www"; \
@@ -69,9 +52,6 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/S48webui-config \
 		$(TARGET_DIR)/etc/init.d/S48webui-config
-	$(INSTALL) -d $(TARGET_DIR)/etc
-	printf '%s\n' '$(THINGINO_WEBUI_STREAMER)' > $(TARGET_DIR)/etc/thingino-streamer
-	chmod 0644 $(TARGET_DIR)/etc/thingino-streamer
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/S91mqttsub \
 		$(TARGET_DIR)/etc/init.d/S91mqttsub
 #	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/S99heartbeat \
@@ -84,18 +64,12 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 
 	# camera-only services
 	if [ "$(BR2_THINGINO_DEV_IPCAM)" = "y" ]; then \
-		$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/S95recordmgr \
-			$(TARGET_DIR)/etc/init.d/S95recordmgr; \
-		$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/recordmgr \
-			$(TARGET_DIR)/usr/sbin/recordmgr; \
 		$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/telegram-cam-register \
 			$(TARGET_DIR)/usr/sbin/telegram-cam-register; \
 		$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/telegram-cam-agent \
 			$(TARGET_DIR)/usr/sbin/telegram-cam-agent; \
 	else \
-		rm -f $(TARGET_DIR)/etc/init.d/S95recordmgr \
-			$(TARGET_DIR)/usr/sbin/recordmgr \
-			$(TARGET_DIR)/usr/sbin/telegram-cam-register \
+		rm -f $(TARGET_DIR)/usr/sbin/telegram-cam-register \
 			$(TARGET_DIR)/usr/sbin/telegram-cam-agent; \
 	fi
 
@@ -104,13 +78,9 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/401.html
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/config-admin.html \
 		$(TARGET_DIR)/var/www/config-admin.html
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/config-audio.html \
-		$(TARGET_DIR)/var/www/config-audio.html
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/config-network.html \
 		$(TARGET_DIR)/var/www/config-network.html
 
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/config-rtsp.html \
-		$(TARGET_DIR)/var/www/config-rtsp.html
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/config-syslog.html \
 		$(TARGET_DIR)/var/www/config-syslog.html
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/config-time.html \
@@ -135,26 +105,20 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/info-usage.html
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/login.html \
 		$(TARGET_DIR)/var/www/login.html
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PREVIEW_HTML) \
+	# Core preview page. A streamer package that needs a different
+	# implementation (raptor, timps) ships its own preview.html under the
+	# same filename and installs it straight over this one from its own
+	# INSTALL_TARGET_CMDS/POST_INSTALL_TARGET_HOOKS (with a dependency on
+	# thingino-webui for ordering) - plain overwrite, before plugin
+	# assembly below ever runs. prudynt-t installs none, so this stays.
+	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/preview.html \
 		$(TARGET_DIR)/var/www/preview.html
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/reset.html \
 		$(TARGET_DIR)/var/www/reset.html
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/streamer-image.html \
-		$(TARGET_DIR)/var/www/streamer-image.html
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/streamer-main.html \
-		$(TARGET_DIR)/var/www/streamer-main.html
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/streamer-osd.html \
-		$(TARGET_DIR)/var/www/streamer-osd.html
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/streamer-sensor.html \
-		$(TARGET_DIR)/var/www/streamer-sensor.html
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/streamer-substream.html \
-		$(TARGET_DIR)/var/www/streamer-substream.html
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/tool-file-manager.html \
 		$(TARGET_DIR)/var/www/tool-file-manager.html
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/tool-ping-trace.html \
 		$(TARGET_DIR)/var/www/tool-ping-trace.html
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/tool-record.html \
-		$(TARGET_DIR)/var/www/tool-record.html
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/tool-sdcard.html \
 		$(TARGET_DIR)/var/www/tool-sdcard.html
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/tool-send2.html \
@@ -179,8 +143,6 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/tool-send2-webhook.html
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/tool-sensor-data.html \
 		$(TARGET_DIR)/var/www/tool-sensor-data.html
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/tool-timelapse.html \
-		$(TARGET_DIR)/var/www/tool-timelapse.html
 	if [ "$(BR2_THINGINO_DEV_PACKAGES)" = "y" ]; then \
 		$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/tool-upgrade.html \
 			$(TARGET_DIR)/var/www/tool-upgrade.html; \
@@ -191,14 +153,10 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/wait.html
 
 	# JavaScripts
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/audio.js \
-		$(TARGET_DIR)/var/www/a/audio.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/config-admin.js \
 		$(TARGET_DIR)/var/www/a/config-admin.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/config-network.js \
 		$(TARGET_DIR)/var/www/a/config-network.js
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/config-rtsp.js \
-		$(TARGET_DIR)/var/www/a/config-rtsp.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/config-syslog.js \
 		$(TARGET_DIR)/var/www/a/config-syslog.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/config-time.js \
@@ -227,22 +185,16 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/a/navigation.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/preview.js \
 		$(TARGET_DIR)/var/www/a/preview.js
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/sei-osd.js \
-		$(TARGET_DIR)/var/www/a/sei-osd.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/sei-rotate.js \
 		$(TARGET_DIR)/var/www/a/sei-rotate.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/reset.js \
 		$(TARGET_DIR)/var/www/a/reset.js
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/streamer-config.js \
-		$(TARGET_DIR)/var/www/a/streamer-config.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/theme-init.js \
 		$(TARGET_DIR)/var/www/a/theme-init.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/tool-file-manager.js \
 		$(TARGET_DIR)/var/www/a/tool-file-manager.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/tool-ping-trace.js \
 		$(TARGET_DIR)/var/www/a/tool-ping-trace.js
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/tool-record.js \
-		$(TARGET_DIR)/var/www/a/tool-record.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/tool-sdcard.js \
 		$(TARGET_DIR)/var/www/a/tool-sdcard.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/tool-send2.js \
@@ -267,8 +219,6 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/a/tool-send2-webhook.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/tool-sensor-data.js \
 		$(TARGET_DIR)/var/www/a/tool-sensor-data.js
-	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/tool-timelapse.js \
-		$(TARGET_DIR)/var/www/a/tool-timelapse.js
 	if [ "$(BR2_THINGINO_DEV_PACKAGES)" = "y" ]; then \
 		$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/tool-upgrade.js \
 			$(TARGET_DIR)/var/www/a/tool-upgrade.js; \
@@ -300,22 +250,8 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/x/agent.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/auth.sh \
 		$(TARGET_DIR)/var/www/x/auth.sh
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/ch0.jpg \
-		$(TARGET_DIR)/var/www/x/ch0.jpg
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/ch0.mjpg \
-		$(TARGET_DIR)/var/www/x/ch0.mjpg
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/ch1.jpg \
-		$(TARGET_DIR)/var/www/x/ch1.jpg
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/ch1.mjpg \
-		$(TARGET_DIR)/var/www/x/ch1.mjpg
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/dl0.jpg \
-		$(TARGET_DIR)/var/www/x/dl0.jpg
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/dl1.jpg \
-		$(TARGET_DIR)/var/www/x/dl1.jpg
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/dl2.cgi \
 		$(TARGET_DIR)/var/www/x/dl2.jpg
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/events.cgi \
-		$(TARGET_DIR)/var/www/x/events.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/firmware-reset.cgi \
 		$(TARGET_DIR)/var/www/x/firmware-reset.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/image.raw \
@@ -330,8 +266,6 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/x/json-config-admin.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-config-network.cgi \
 		$(TARGET_DIR)/var/www/x/json-config-network.cgi
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-config-rtsp.cgi \
-		$(TARGET_DIR)/var/www/x/json-config-rtsp.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-config-send2.cgi \
 		$(TARGET_DIR)/var/www/x/json-config-send2.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-config-syslog.cgi \
@@ -348,21 +282,8 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/x/json-heartbeat.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-heartbeat-slow.cgi \
 		$(TARGET_DIR)/var/www/x/json-heartbeat-slow.cgi
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-osd-sei.cgi \
-		$(TARGET_DIR)/var/www/x/json-osd-sei.cgi
-
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-imaging.cgi \
-		$(TARGET_DIR)/var/www/x/json-imaging.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-imp.cgi \
 		$(TARGET_DIR)/var/www/x/json-imp.cgi
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-motion.cgi \
-		$(TARGET_DIR)/var/www/x/json-motion.cgi
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-prudynt.cgi \
-		$(TARGET_DIR)/var/www/x/json-prudynt.cgi
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-prudynt-config.cgi \
-		$(TARGET_DIR)/var/www/x/json-prudynt-config.cgi
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-prudynt-save.cgi \
-		$(TARGET_DIR)/var/www/x/json-prudynt-save.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-reset-ntp.cgi \
 		$(TARGET_DIR)/var/www/x/json-reset-ntp.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-send2.cgi \
@@ -385,8 +306,6 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/x/reset.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/restart-httpd.cgi \
 		$(TARGET_DIR)/var/www/x/restart-httpd.cgi
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/restart-prudynt.cgi \
-		$(TARGET_DIR)/var/www/x/restart-prudynt.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/restore.cgi \
 		$(TARGET_DIR)/var/www/x/restore.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/run.cgi \
@@ -403,8 +322,6 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/x/tool-file-manager.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/tool-ping-trace.cgi \
 		$(TARGET_DIR)/var/www/x/tool-ping-trace.cgi
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/tool-record.cgi \
-		$(TARGET_DIR)/var/www/x/tool-record.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/tool-sdcard.cgi \
 		$(TARGET_DIR)/var/www/x/tool-sdcard.cgi
 	if [ "$(BR2_THINGINO_DEV_PACKAGES)" = "y" ]; then \
@@ -415,7 +332,6 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 	fi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/wifi-scan.cgi \
 		$(TARGET_DIR)/var/www/x/wifi-scan.cgi
-	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/video.mjpg $(TARGET_DIR)/var/www/x/video.mjpg
 
 	# Paranoid mode: install local vendor assets (CDN rewriting happens in
 	# finalize hook so plugin pages installed later are also processed)
@@ -441,11 +357,15 @@ endef
 ROOTFS_PRE_CMD_HOOKS += THINGINO_WEBUI_PARANOID_REWRITE
 
 # Plugin assembly finalize hook — runs after every package is installed,
-# discovers *.webui.json manifests, merges nav/scripts/styles, and
-# re-applies asset tags and CDN fallbacks.
+# discovers *.webui.json manifests, merges nav/scripts/styles, and re-applies
+# asset tags and CDN fallbacks.
+#
+# Failures are fatal on purpose: every error assemble_plugins.py raises is a
+# manifest conflict (duplicate plugin name, two plugins claiming the same page,
+# two providers for the same extension point) that silently produces a broken
+# WebUI. Swallowing them just moves the discovery to the camera.
 define THINGINO_WEBUI_ASSEMBLE_PLUGINS
-	@python3 "$(THINGINO_WEBUI_PKGDIR)/scripts/assemble_plugins.py" "$(TARGET_DIR)" || \
-		printf 'thingino-webui: plugin assembly failed (non-fatal)\n'
+	@python3 "$(THINGINO_WEBUI_PKGDIR)/scripts/assemble_plugins.py" "$(TARGET_DIR)"
 endef
 THINGINO_WEBUI_TARGET_FINALIZE_HOOKS += THINGINO_WEBUI_ASSEMBLE_PLUGINS
 
