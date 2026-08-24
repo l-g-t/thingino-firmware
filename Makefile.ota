@@ -98,7 +98,9 @@ else
 		$(ROOTFS_OFFSET) $(ROOTFS_PARTITION_SIZE) $(ROOTFS_BIN_SIZE) \
 		$(DATA_OFFSET) $(DATA_PARTITION_SIZE) $(DATA_BIN_SIZE) $(DATA_BIN_SIZE_ALIGNED) \
 		$(U_BOOT_SIZE_KB) $(UB_ENV_SIZE_KB) $(BACKUP_SIZE_KB) $(KERNEL_SIZE_KB) $(ROOTFS_SIZE_KB) $(DATA_SIZE_KB) \
-		$(FLASH_SIZE_KB) "$$(( $$(date +%s) - $(THINGINO_BUILD_START_EPOCH) ))" "$$(( ($$($(SCRIPTS_DIR)/disk_sectors_written.sh) - $(THINGINO_BUILD_START_DISK_SECTORS)) * 512 ))" $(UBOOT_FLASH_CONTROLLER) && \
+		$(FLASH_SIZE_KB) "$$(( $$(date +%s) - $(THINGINO_BUILD_START_EPOCH) ))" \
+		"$$(( ($$($(SCRIPTS_DIR)/disk_sectors_written.sh) - $(THINGINO_BUILD_START_DISK_SECTORS)) * 512 ))" \
+		$(UBOOT_FLASH_CONTROLLER) && \
 		cat $(OUTPUT_DIR)/images/$(CAMERA).md
 	@$(ORANGE) "Camera: $(CAMERA)"
 	@$(ORANGE) "Device IP: $(CAMERA_IP_ADDRESS)"
@@ -245,6 +247,13 @@ backup-overlay:
 	@$(TEAL) "$@"
 	@[ -n "$(CAMERA_IP_ADDRESS)" ] || { echo "ERROR: IP is required for $@. Use 'make $@ IP=<camera-ip>'."; exit 1; }
 	$(SCRIPTS_DIR)/backup_overlay.sh $(CAMERA_IP_ADDRESS) $(THINGINO_BACKUP_DIR)
+
+# Apply user preference files (user/*/overlay, opt, thingino.json, prudynt.json)
+# to an already-flashed camera without rebuilding firmware.
+user-push:
+	@$(TEAL) "$@"
+	@[ -n "$(CAMERA_IP_ADDRESS)" ] || { echo "ERROR: IP is required for $@. Use 'make $@ IP=<camera-ip>'."; exit 1; }
+	$(SCRIPTS_DIR)/user-push.sh -i $(CAMERA_IP_ADDRESS)
 
 # Start standalone TFTP server for serving firmware images
 tftpd-start:
