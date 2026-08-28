@@ -1,4 +1,4 @@
-THINGINO_RAPTOR_VERSION = 17804903e1414d426802df0967b3bdbd72219f58
+THINGINO_RAPTOR_VERSION = da67ebc38ed99c52fa1d548cb1d862ad5ce1f81d
 THINGINO_RAPTOR_SITE = https://github.com/gtxaspec/raptor
 THINGINO_RAPTOR_SITE_METHOD = git
 
@@ -206,6 +206,8 @@ define THINGINO_RAPTOR_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/a/streamer-config.js
 	$(INSTALL) -D -m 0644 $(THINGINO_RAPTOR_PKGDIR)/files/www/a/streamer-osd.js \
 		$(TARGET_DIR)/var/www/a/streamer-osd.js
+	$(INSTALL) -D -m 0644 $(THINGINO_RAPTOR_PKGDIR)/files/www/a/streamer-image.js \
+		$(TARGET_DIR)/var/www/a/streamer-image.js
 	$(INSTALL) -D -m 0644 $(THINGINO_RAPTOR_PKGDIR)/files/www/a/audio.js \
 		$(TARGET_DIR)/var/www/a/audio.js
 	$(INSTALL) -D -m 0644 $(THINGINO_RAPTOR_PKGDIR)/files/www/a/tool-timelapse.js \
